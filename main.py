@@ -4,6 +4,7 @@ from math import radians, cos, sin, asin, sqrt
 from dotenv import load_dotenv
 import os
 import datetime
+from http.server import SimpleHTTPRequestHandler, HTTPServer
 
 load_dotenv()  # Загружаем переменные из .env
 
@@ -90,3 +91,11 @@ def handle_location(message):
 
 # === Запуск бота
 bot.polling()
+
+# Простой http-сервер
+HOST = "0.0.0.0"
+PORT = os.getenv("PORT")
+
+server = HTTPServer((HOST, PORT), SimpleHTTPRequestHandler)
+print(f"Сервер запущен на http://{HOST}:{PORT}")
+server.serve_forever()
