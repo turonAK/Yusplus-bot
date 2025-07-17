@@ -4,35 +4,34 @@ from math import radians, cos, sin, asin, sqrt
 from dotenv import load_dotenv
 import os
 import datetime
-import mysql.connector
+import psycopg2
 
-# Загрузка переменных среды
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
 
-# === Координаты места тимбилдинга ===
+# === Геопозиция мероприятия ===
 TARGET_LAT = 41.356015
 TARGET_LON = 69.314663
 RADIUS_METERS = 150
 
-# === Подключение к MySQL ===
-conn = mysql.connector.connect(
-    host=os.getenv("DB_HOST"),
+# === Подключение к PostgreSQL ===
+conn = psycopg2.connect(
+    dbname=os.getenv("DB_NAME"),
     user=os.getenv("DB_USER"),
     password=os.getenv("DB_PASSWORD"),
-    database=os.getenv("DB_NAME"),
-    port=int(os.getenv("DB_PORT", 3306))
+    host=os.getenv("DB_HOST"),
+    port=os.getenv("DB_PORT")
 )
 cursor = conn.cursor()
 
 # === Расчёт расстояния
 def calculate_distance(lat1, lon1, lat2, lon2):
-    R = 6371000
+    R = 6371000  # Радиус Земли в метрах
     dlat = radians(lat2 - lat1)
     dlon = radians(lon2 - lon1)
-    a = sin(dlat / 2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2)**2
+    a = sin(dlat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)**2
     c = 2 * asin(sqrt(a))
     return R * c
 
@@ -43,9 +42,7 @@ def start(message):
     name = message.from_user.first_name
 
     cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
-    user = cursor.fetchone()
-
-    if not user:
+    if cursor.fetchone() is None:
         cursor.execute("INSERT INTO users (user_id, name) VALUES (%s, %s)", (user_id, name))
         conn.commit()
 
