@@ -4,28 +4,31 @@ from math import radians, cos, sin, asin, sqrt
 from dotenv import load_dotenv
 import os
 import datetime
-# from http.server import SimpleHTTPRequestHandler, HTTPServer
-# import threading
+import psycopg2
 
-load_dotenv()  # Загружаем переменные из .env
+load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
-
-# === ТВОЙ ТОКЕН ОТ BOTFATHE ===
 bot = telebot.TeleBot(TOKEN)
 
-# === КООРДИНАТЫ МЕСТА ТИМБИЛДИНГА ===
+# === Геопозиция мероприятия ===
 TARGET_LAT = 41.356015
 TARGET_LON = 69.314663
-RADIUS_METERS = 150  # радиус допустимого отклонения
+RADIUS_METERS = 150
 
-# === ПРОСТАЯ БАЗА ДАННЫХ
-users = {}
+# === Подключение к PostgreSQL ===
+conn = psycopg2.connect(
+    dbname=os.getenv("DB_NAME"),
+    user=os.getenv("DB_USER"),
+    password=os.getenv("DB_PASSWORD"),
+    host=os.getenv("DB_HOST"),
+    port=os.getenv("DB_PORT")
+)
+cursor = conn.cursor()
 
-# === ПОДСЧЁТ РАССТОЯНИЯ
+# === Расчёт расстояния
 def calculate_distance(lat1, lon1, lat2, lon2):
-    # Haversine formula
-    R = 6371000  # Земной радиус в метрах
+    R = 6371000  # Радиус Земли в метрах
     dlat = radians(lat2 - lat1)
     dlon = radians(lon2 - lon1)
     a = sin(dlat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)**2
@@ -36,27 +39,38 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
-    if user_id not in users:
-        users[user_id] = {"name": message.from_user.first_name, "points": 0, "last_checkin": None}
+    name = message.from_user.first_name
+
+    cursor.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+    if cursor.fetchone() is None:
+        cursor.execute("INSERT INTO users (user_id, name) VALUES (%s, %s)", (user_id, name))
+        conn.commit()
+
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("✅ Подтвердить участие", "📊 Мои баллы")
-    bot.send_message(message.chat.id, f"Привет, {message.from_user.first_name}! Добро пожаловать в YES+ 🎉\nТы получаешь 20 баллов за каждое участие в тимбилдинге.\nНажми 'Подтвердить участие', когда будешь на месте!", reply_markup=markup)
+    bot.send_message(
+        message.chat.id,
+        f"Привет, {name}! Добро пожаловать в YES+ 🎉\nТы получаешь 20 баллов за каждое участие в тимбилдинге.\nНажми 'Подтвердить участие', когда будешь на месте!",
+        reply_markup=markup
+    )
 
 # === /score
 @bot.message_handler(commands=['score'])
 def score(message):
     user_id = message.from_user.id
-    if user_id in users:
-        points = users[user_id]["points"]
-        bot.send_message(message.chat.id, f"У тебя {points} баллов 🟢")
+    cursor.execute("SELECT points FROM users WHERE user_id = %s", (user_id,))
+    result = cursor.fetchone()
+    if result:
+        bot.send_message(message.chat.id, f"У тебя {result[0]} баллов 🟢")
     else:
         bot.send_message(message.chat.id, "Ты ещё не зарегистрирован. Напиши /start.")
 
-# === Проверка текста кнопок
+# === Кнопка "Мои баллы"
 @bot.message_handler(func=lambda m: m.text == "📊 Мои баллы")
 def handle_score_button(message):
     score(message)
 
+# === Кнопка "Подтвердить участие"
 @bot.message_handler(func=lambda m: m.text == "✅ Подтвердить участие")
 def ask_location(message):
     keyboard = types.ReplyKeyboardMarkup(one_time_keyboard=True, resize_keyboard=True)
@@ -68,40 +82,31 @@ def ask_location(message):
 @bot.message_handler(content_types=['location'])
 def handle_location(message):
     user_id = message.from_user.id
-    if user_id not in users:
-        bot.send_message(message.chat.id, "Сначала напиши /start для регистрации.")
-        return
-
     lat = message.location.latitude
     lon = message.location.longitude
     distance = calculate_distance(lat, lon, TARGET_LAT, TARGET_LON)
 
-    today = datetime.date.today()
-    last_check = users[user_id]["last_checkin"]
+    cursor.execute("SELECT points, last_checkin FROM users WHERE user_id = %s", (user_id,))
+    result = cursor.fetchone()
 
-    if last_check == today:
+    if not result:
+        bot.send_message(message.chat.id, "Сначала напиши /start для регистрации.")
+        return
+
+    points, last_checkin = result
+    today = datetime.date.today()
+
+    if last_checkin == today:
         bot.send_message(message.chat.id, "Ты уже подтвердил участие сегодня 😉")
         return
 
     if distance <= RADIUS_METERS:
-        users[user_id]["points"] += 20
-        users[user_id]["last_checkin"] = today
+        new_points = points + 20
+        cursor.execute("UPDATE users SET points = %s, last_checkin = %s WHERE user_id = %s", (new_points, today, user_id))
+        conn.commit()
         bot.send_message(message.chat.id, "✅ Участие подтверждено! +20 баллов 🎉")
     else:
         bot.send_message(message.chat.id, "Ты находишься вне зоны мероприятия ❌\nБаллы не начислены.")
-
-# Простой http-сервер
-# def run_http_server():
-#     HOST = "0.0.0.0"
-#     PORT = int(os.getenv("PORT", "8000"))
-#     server = HTTPServer((HOST, PORT), SimpleHTTPRequestHandler)
-#     print(f"HTTP-сервер запущен на http://{HOST}:{PORT}")
-#     server.serve_forever()
-
-# Запуск http-сервера в отдельном потоке
-# http_thread = threading.Thread(target=run_http_server)
-# http_thread.daemon = True  # поток завершится при завершении основного
-# http_thread.start()
 
 # === Запуск бота
 bot.polling()
