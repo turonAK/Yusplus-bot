@@ -1,10 +1,15 @@
 import telebot
 from telebot import types
 from math import radians, cos, sin, asin, sqrt
+from dotenv import load_dotenv
+import os
 import datetime
 
+load_dotenv()  # Загружаем переменные из .env
+
+TOKEN = os.getenv("BOT_TOKEN")
+
 # === ТВОЙ ТОКЕН ОТ BOTFATHE ===
-TOKEN = "7594820357:AAGx5D-JgfXQ9XjeaqR9oGV-OKe9xEiQWQw"
 bot = telebot.TeleBot(TOKEN)
 
 # === КООРДИНАТЫ МЕСТА ТИМБИЛДИНГА ===
