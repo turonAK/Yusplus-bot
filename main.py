@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import os
 import datetime
 from http.server import SimpleHTTPRequestHandler, HTTPServer
+import threading
 
 load_dotenv()  # Загружаем переменные из .env
 
@@ -89,13 +90,18 @@ def handle_location(message):
     else:
         bot.send_message(message.chat.id, "Ты находишься вне зоны мероприятия ❌\nБаллы не начислены.")
 
+# Простой http-сервер
+def run_http_server():
+    HOST = "0.0.0.0"
+    PORT = int(os.getenv("PORT", "8000"))
+    server = HTTPServer((HOST, PORT), SimpleHTTPRequestHandler)
+    print(f"HTTP-сервер запущен на http://{HOST}:{PORT}")
+    server.serve_forever()
+
+# Запуск http-сервера в отдельном потоке
+http_thread = threading.Thread(target=run_http_server)
+http_thread.daemon = True  # поток завершится при завершении основного
+http_thread.start()
+
 # === Запуск бота
 bot.polling()
-
-# Простой http-сервер
-HOST = "0.0.0.0"
-PORT = os.getenv("PORT")
-
-server = HTTPServer((HOST, PORT), SimpleHTTPRequestHandler)
-print(f"Сервер запущен на http://{HOST}:{PORT}")
-server.serve_forever()
