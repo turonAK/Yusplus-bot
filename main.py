@@ -160,11 +160,7 @@ def handle_location(message):
     else:
         bot.send_message(message.chat.id, "Ты находишься вне зоны мероприятия ❌ Баллы не начислены.", reply_markup=main_menu_markup())
 
-# Error handler
-def handle_error(error):
-    logger.exception(error)
-
 # Start polling
 if __name__ == '__main__':
     logger.info("Starting bot polling...")
-    bot.infinity_polling(skip_pending=True, on_error=handle_error)
+    bot.infinity_polling(skip_pending=True)
