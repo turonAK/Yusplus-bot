@@ -13,7 +13,8 @@ load_dotenv()
 
 # Bot and Database config
 token = os.getenv("BOT_TOKEN")
-admin_id = int(os.getenv("ADMIN_ID", "0"))  # add ADMIN_ID to .env for broadcast
+admin_id = int(os.getenv("ADMIN_ID", "0"))  # admin Telegram ID from .env
+
 db_config = {
     'dbname': os.getenv("DB_NAME"),
     'user': os.getenv("DB_USER"),
@@ -48,10 +49,11 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     return R * c
 
 # Keyboards
-def main_menu_markup():
+def main_menu_markup(user_id):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("✅ Подтвердить участие", "📊 Мои баллы")
-    if admin_id:
+    # Only admin sees broadcast button
+    if user_id == admin_id:
         markup.add("✉️ Рассылка (админ)")
     return markup
 
@@ -67,17 +69,22 @@ def command_start(message):
     name = message.from_user.first_name or message.from_user.username
     with get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+            cur.execute("SELECT 1 FROM users WHERE user_id = %s", (user_id,))
             if not cur.fetchone():
                 cur.execute(
                     "INSERT INTO users (user_id, name) VALUES (%s, %s)",
                     (user_id, name)
                 )
                 conn.commit()
+    text = (
+        f"Привет, {name}! Добро пожаловать в YES+ 🎉\n"
+        "20 баллов за участие в тимбилдинге. "
+        "Нажми кнопку, когда будешь на месте!"
+    )
     bot.send_message(
         message.chat.id,
-        f"Привет, {name}! Добро пожаловать в YES+ 🎉\nТы получаешь 20 баллов за участие в тимбилдинге.\nНажми 'Подтвердить участие', когда будешь на месте!",
-        reply_markup=main_menu_markup()
+        text,
+        reply_markup=main_menu_markup(user_id)
     )
 
 # /score handler
@@ -89,7 +96,11 @@ def command_score(message):
             cur.execute("SELECT points FROM users WHERE user_id = %s", (user_id,))
             result = cur.fetchone()
     if result:
-        bot.send_message(message.chat.id, f"У тебя {result[0]} баллов 🟢")
+        bot.send_message(
+            message.chat.id,
+            f"У тебя {result[0]} баллов 🟢",
+            reply_markup=main_menu_markup(user_id)
+        )
     else:
         bot.send_message(message.chat.id, "Ты ещё не зарегистрирован. Напиши /start.")
 
@@ -100,7 +111,11 @@ def button_score(m):
 
 @bot.message_handler(func=lambda m: m.text == "✅ Подтвердить участие")
 def button_confirm(m):
-    bot.send_message(m.chat.id, "Пожалуйста, отправь свою геолокацию, чтобы подтвердить участие:", reply_markup=location_request_markup())
+    bot.send_message(
+        m.chat.id,
+        "Пожалуйста, отправь свою геолокацию, чтобы подтвердить участие:",
+        reply_markup=location_request_markup()
+    )
 
 # Admin broadcast flow
 broadcast_state = {}
@@ -108,15 +123,14 @@ broadcast_state = {}
 @bot.message_handler(func=lambda m: m.text == "✉️ Рассылка (админ)")
 def start_broadcast(m):
     if m.from_user.id != admin_id:
-        bot.send_message(m.chat.id, "❌ У вас нет прав на рассылку.")
-        return
+        return bot.send_message(m.chat.id, "❌ У вас нет прав на рассылку.")
     bot.send_message(m.chat.id, "Введите текст для рассылки всем пользователям:")
     broadcast_state[m.chat.id] = 'waiting_for_text'
 
 @bot.message_handler(func=lambda m: broadcast_state.get(m.chat.id) == 'waiting_for_text')
 def process_broadcast_text(m):
     text = m.text
-    broadcast_state[m.chat.id] = None
+    broadcast_state.pop(m.chat.id, None)
     count = 0
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -141,12 +155,15 @@ def handle_location(message):
             cur.execute("SELECT points, last_checkin FROM users WHERE user_id = %s", (user_id,))
             data = cur.fetchone()
     if not data:
-        bot.send_message(message.chat.id, "Сначала напиши /start для регистрации.")
-        return
+        return bot.send_message(message.chat.id, "Сначала напиши /start для регистрации.")
     points, last_checkin = data
     today = datetime.date.today()
     if last_checkin == today:
-        bot.send_message(message.chat.id, "Ты уже подтвердил участие сегодня 😉")
+        bot.send_message(
+            message.chat.id,
+            "Ты уже подтвердил участие сегодня 😉",
+            reply_markup=main_menu_markup(user_id)
+        )
     elif dist <= RADIUS_METERS:
         new_points = points + 20
         with get_db_connection() as conn:
@@ -156,9 +173,17 @@ def handle_location(message):
                     (new_points, today, user_id)
                 )
                 conn.commit()
-        bot.send_message(message.chat.id, "✅ Участие подтверждено! +20 баллов 🎉", reply_markup=main_menu_markup())
+        bot.send_message(
+            message.chat.id,
+            "✅ Участие подтверждено! +20 баллов 🎉",
+            reply_markup=main_menu_markup(user_id)
+        )
     else:
-        bot.send_message(message.chat.id, "Ты находишься вне зоны мероприятия ❌ Баллы не начислены.", reply_markup=main_menu_markup())
+        bot.send_message(
+            message.chat.id,
+            "Ты находишься вне зоны мероприятия ❌ Баллы не начислены.",
+            reply_markup=main_menu_markup(user_id)
+        )
 
 # Start polling
 if __name__ == '__main__':
