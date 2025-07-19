@@ -194,7 +194,8 @@ def admin_state_handler(m):
         except: bot.send_message(m.chat.id,'Ошибка'); admin_state.pop(m.chat.id)
     # Remove admin
     elif a=='remove_admin' and step==1:
-        try: uid=int(m.text)
+        try: 
+            uid=int(m.text)
             if remove_admin(uid): bot.send_message(m.chat.id,'Удалён')
             else: bot.send_message(m.chat.id,'Нельзя удалить главного')
         except: bot.send_message(m.chat.id,'Ошибка')
