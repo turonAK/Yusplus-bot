@@ -183,10 +183,10 @@ def admin_state_handler(m):
             try: n=int(m.text); state['step']=2; state['data']['n']=n; return bot.send_message(m.chat.id,'Подтвердить удаление? да/нет')
             except: return bot.send_message(m.chat.id,'Число?')
         if m.text.lower()=='да': cnt=0
-            for uid,msg_id in broadcast_history[-state['data']['n']:]:
-                try: bot.delete_message(uid,msg_id); cnt+=1
-                except: pass
-            bot.send_message(m.chat.id,f"Удалено {cnt}")
+        for uid,msg_id in broadcast_history[-state['data']['n']:]:
+            try: bot.delete_message(uid,msg_id); cnt+=1
+            except: pass
+        bot.send_message(m.chat.id,f"Удалено {cnt}")
         admin_state.pop(m.chat.id)
     # Assign admin
     elif a=='assign' and step==1:
