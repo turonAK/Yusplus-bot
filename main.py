@@ -172,7 +172,7 @@ def admin_state_handler(m):
         if step==1:
             state['data']['text']=m.text; state['step']=2; return bot.send_message(m.chat.id,'Рассылка? да/нет')
         if m.text.lower()=='да': cnt=0; text=state['data']['text']
-            for (uid,) in get_db_connection().cursor().execute("SELECT user_id FROM users"): 
+            for (uid,) in get_db_connection().cursor().execute("SELECT user_id FROM users"):
                 try: msg=bot.send_message(uid,text); broadcast_history.append((uid,msg.message_id)); cnt+=1
                 except: pass
             bot.send_message(m.chat.id,f"Отправлено {cnt}")
