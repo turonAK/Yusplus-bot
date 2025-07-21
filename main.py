@@ -364,3 +364,4 @@ def admin_state_handler(m):
                 else:
                     msg = bot.send_photo(uid, state['data']['file_url'], caption=caption)
                 broadcast_history.append((uid
+
