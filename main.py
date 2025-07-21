@@ -105,14 +105,19 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 # Keyboards
 def main_menu_markup(user_id):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    # Базовые кнопки для всех пользователей
     kb.add("Участие✅", "Баллы📊")
+
+    # Админские кнопки (без просмотра списка пользователей)
     if is_admin(user_id):
         kb.add("Текст✉️", "Фото🖼️", "Видео📹")
         kb.add("Файл📎", "Локация📍")
         kb.add("Изменить📌", "Удалить✂️")
-        kb.add("Пользователи👥")
+        # Кнопка "Пользователи👥" доступна только главному администратору
         if user_id == primary_admin_id:
+            kb.add("Пользователи👥")
             kb.add("Назначить👑", "Снять👑")
+
     return kb
 
 def location_request_markup():
@@ -149,14 +154,13 @@ def cmd_score(m):
 def cmd_confirm(m):
     bot.send_message(m.chat.id, "Отправь геолокацию:", reply_markup=location_request_markup())
 
-@bot.message_handler(func=lambda m: m.text == "Пользователи👥" and is_admin(m.from_user.id))
+@bot.message_handler(func=lambda m: m.text == "Пользователи👥" and m.from_user.id == primary_admin_id)
 def cmd_list_users(m):
     users = list_users()
     if not users:
         return bot.send_message(m.chat.id, "Пользователи отсутствуют.")
     lines = [f"{u['name']} ({u['user_id']}): {u['points']} баллов" for u in users]
     text = "\n".join(lines)
-    # split if too long
     for chunk in [text[i:i+3500] for i in range(0, len(text), 3500)]:
         bot.send_message(m.chat.id, chunk)
 
