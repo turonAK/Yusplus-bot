@@ -108,13 +108,14 @@ def main_menu_markup(user_id):
     # Базовые кнопки для всех пользователей
     kb.add("Участие✅", "Баллы📊")
 
-    # Админские кнопки (без просмотра списка пользователей)
+    # Админские кнопки (без изменения локации для обычных админов)
     if is_admin(user_id):
         kb.add("Текст✉️", "Фото🖼️", "Видео📹")
         kb.add("Файл📎", "Локация📍")
-        kb.add("Изменить📌", "Удалить✂️")
-        # Кнопка "Пользователи👥" доступна только главному администратору
+        kb.add("Удалить✂️")
+        # Кнопка изменения локации и просмотра пользователей только для главного админа
         if user_id == primary_admin_id:
+            kb.add("Изменить📌")
             kb.add("Пользователи👥")
             kb.add("Назначить👑", "Снять👑")
 
@@ -362,76 +363,4 @@ def admin_state_handler(m):
                     msg = bot.send_photo(uid, state['data']['file_id'], caption=caption)
                 else:
                     msg = bot.send_photo(uid, state['data']['file_url'], caption=caption)
-                broadcast_history.append((uid, msg.message_id))
-                cnt += 1
-            except:
-                pass
-        bot.send_message(m.chat.id, f"Фото разослано: {cnt}")
-        admin_state.pop(m.from_user.id)
-        return
-
-    # VIDEO broadcast
-    if action == 'video':
-        if step == 1:
-            if m.video:
-                state['data']['file_id'] = m.video.file_id
-            else:
-                state['data']['file_url'] = m.text
-            state['step'] = 2
-            bot.send_message(m.chat.id, 'Введите подпись или "нет"')
-            return
-        caption = None if m.text.lower() == 'нет' else m.text
-        cnt = 0
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT user_id FROM users")
-                users = cur.fetchall()
-        for (uid,) in users:
-            try:
-                if 'file_id' in state['data']:
-                    msg = bot.send_video(uid, state['data']['file_id'], caption=caption)
-                else:
-                    msg = bot.send_video(uid, state['data']['file_url'], caption=caption)
-                broadcast_history.append((uid, msg.message_id))
-                cnt += 1
-            except:
-                pass
-        bot.send_message(m.chat.id, f"Видео разослано: {cnt}")
-        admin_state.pop(m.from_user.id)
-        return
-
-    # FILE broadcast
-    if action == 'file':
-        if step == 1:
-            if m.document:
-                state['data']['file_id'] = m.document.file_id
-            else:
-                state['data']['file_url'] = m.text
-            state['step'] = 2
-            bot.send_message(m.chat.id, 'Введите подпись или "нет"')
-            return
-        caption = None if m.text.lower() == 'нет' else m.text
-        cnt = 0
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT user_id FROM users")
-                users = cur.fetchall()
-        for (uid,) in users:
-            try:
-                if 'file_id' in state['data']:
-                    msg = bot.send_document(uid, state['data']['file_id'], caption=caption)
-                else:
-                    msg = bot.send_document(uid, state['data']['file_url'], caption=caption)
-                broadcast_history.append((uid, msg.message_id))
-                cnt += 1
-            except:
-                pass
-        bot.send_message(m.chat.id, f"Файл разослан: {cnt}")
-        admin_state.pop(m.from_user.id)
-        return
-
-# Init and start
-if __name__ == '__main__':
-    init_db()
-    logger.info('Bot started')
-    bot.infinity_polling()
+                broadcast_history.append((uid
