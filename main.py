@@ -38,6 +38,7 @@ bot = telebot.TeleBot(token)
 # Global state
 admin_state = {}
 broadcast_history = []  # store broadcasted messages as (chat_id, message_id)
+user_state = {}          # store registration state
 
 # Database helpers
 def get_db_connection():
@@ -52,6 +53,14 @@ def init_db():
             cur.execute(
                 "INSERT INTO admins(user_id) VALUES(%s) ON CONFLICT DO NOTHING",
                 (primary_admin_id,)
+            )
+            cur.execute(
+                "CREATE TABLE IF NOT EXISTS users("
+                "user_id BIGINT PRIMARY KEY,"
+                "name TEXT,"
+                "points INT DEFAULT 0,"
+                "last_checkin DATE"
+                ")"
             )
             conn.commit()
 
@@ -105,20 +114,15 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 # Keyboards
 def main_menu_markup(user_id):
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    # Базовые кнопки для всех пользователей
     kb.add("Участие✅", "Баллы📊")
-
-    # Кнопки для админов (локейшн-изменение скрыто от обычных админов)
     if is_admin(user_id):
         kb.add("Текст✉️", "Фото🖼️", "Видео📹")
         kb.add("Файл📎", "Локация📍")
         kb.add("Удалить✂️")
-        # Только главный админ может менять локацию и просматривать пользователей
         if user_id == primary_admin_id:
             kb.add("Изменить📌")
             kb.add("Пользователи👥")
             kb.add("Назначить👑", "Снять👑")
-
     return kb
 
 def location_request_markup():
@@ -130,16 +134,26 @@ def location_request_markup():
 @bot.message_handler(commands=['start'])
 def cmd_start(m):
     uid = m.from_user.id
-    name = m.from_user.first_name or m.from_user.username
+    user_state[uid] = {'action': 'register'}
+    bot.send_message(
+        m.chat.id,
+        "Добро пожаловать в YES PLUS! Пожалуйста, введите ваше имя и фамилию, чтобы зарегистрироваться:"
+    )
+
+@bot.message_handler(func=lambda m: m.from_user.id in user_state and user_state[m.from_user.id]['action'] == 'register', content_types=['text'])
+def handle_registration(m):
+    uid = m.from_user.id
+    full_name = m.text.strip()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO users(user_id,name) VALUES(%s,%s) ON CONFLICT DO NOTHING",
-                (uid, name)
+                "INSERT INTO users(user_id, name) VALUES(%s,%s) "
+                "ON CONFLICT (user_id) DO UPDATE SET name = EXCLUDED.name",
+                (uid, full_name)
             )
             conn.commit()
-    text = f"Привет, {name}! Добро пожаловать в YES PLUS."
-    bot.send_message(m.chat.id, text, reply_markup=main_menu_markup(uid))
+    user_state.pop(uid, None)
+    bot.send_message(m.chat.id, f"Спасибо, {full_name}! Теперь вы зарегистрированы.", reply_markup=main_menu_markup(uid))
 
 @bot.message_handler(func=lambda m: m.text == "Баллы📊")
 def cmd_score(m):
@@ -159,7 +173,8 @@ def cmd_confirm(m):
 def cmd_list_users(m):
     users = list_users()
     if not users:
-        return bot.send_message(m.chat.id, "Пользователи отсутствуют.")
+        bot.send_message(m.chat.id, "Пользователи отсутствуют.")
+        return
     lines = [f"{u['name']} ({u['user_id']}): {u['points']} баллов" for u in users]
     text = "\n".join(lines)
     for chunk in [text[i:i+3500] for i in range(0, len(text), 3500)]:
@@ -168,10 +183,8 @@ def cmd_list_users(m):
 @bot.message_handler(content_types=['location'])
 def handle_location(m):
     uid = m.from_user.id
-    # admin flow
     if is_admin(uid) and uid in admin_state:
         return admin_state_handler(m)
-    # participant flow
     lat, lon = m.location.latitude, m.location.longitude
     dist = calculate_distance(lat, lon, TARGET_LAT, TARGET_LON)
     with get_db_connection() as conn:
@@ -182,7 +195,8 @@ def handle_location(m):
             )
             data = cur.fetchone()
     if not data:
-        return bot.send_message(m.chat.id, "Сначала нажми Участие✅")
+        bot.send_message(m.chat.id, "Сначала нажми Участие✅")
+        return
     pts, last = data
     today = datetime.date.today()
     if last == today:
@@ -201,7 +215,6 @@ def handle_location(m):
         reply = "Вне зоны мероприятия."
     bot.send_message(m.chat.id, reply, reply_markup=main_menu_markup(uid))
 
-# Admin commands trigger
 @bot.message_handler(func=lambda m: is_admin(m.from_user.id) and m.text in [
     "Текст✉️", "Фото🖼️", "Видео📹", "Файл📎", "Локация📍", "Изменить📌", "Удалить✂️", "Назначить👑", "Снять👑"
 ])
@@ -233,15 +246,15 @@ def admin_state_handler(m):
         return
     action = state['action']
     step = state['step']
+    data = state['data']
 
-    # TEXT broadcast
     if action == 'text':
         if step == 1:
-            state['data']['text'] = m.text
+            data['text'] = m.text
             state['step'] = 2
             bot.send_message(m.chat.id, 'Подтвердить рассылку? да/нет')
             return
-        elif m.text.lower() == 'да':
+        if m.text.lower() == 'да':
             cnt = 0
             with get_db_connection() as conn:
                 with conn.cursor() as cur:
@@ -249,7 +262,7 @@ def admin_state_handler(m):
                     users = cur.fetchall()
             for (uid,) in users:
                 try:
-                    msg = bot.send_message(uid, state['data']['text'])
+                    msg = bot.send_message(uid, data['text'])
                     broadcast_history.append((uid, msg.message_id))
                     cnt += 1
                 except:
@@ -260,58 +273,93 @@ def admin_state_handler(m):
         admin_state.pop(m.from_user.id)
         return
 
-    # CLEAR messages
-    if action == 'clear':
+    if action == 'photo':
         if step == 1:
-            try:
-                n = int(m.text)
-                state['data']['n'] = n
-                state['step'] = 2
-                bot.send_message(m.chat.id, 'Подтвердить удаление? да/нет')
-                return
-            except:
-                bot.send_message(m.chat.id, 'Укажи число')
-                return
-        if m.text.lower() == 'да':
-            cnt = 0
-            to_delete = broadcast_history[-state['data']['n']:]
-            for uid, mid in to_delete:
-                try:
-                    bot.delete_message(uid, mid)
-                    cnt += 1
-                except:
-                    pass
-            bot.send_message(m.chat.id, f"Удалено: {cnt}")
-        else:
-            bot.send_message(m.chat.id, 'Удаление отменено')
-        admin_state.pop(m.from_user.id)
-        return
-
-    # ASSIGN admin
-    if action == 'assign':
-        try:
-            new_id = int(m.text)
-            add_admin(new_id)
-            bot.send_message(m.chat.id, f"Админ {new_id} добавлен")
-        except:
-            bot.send_message(m.chat.id, 'Ошибка ID')
-        admin_state.pop(m.from_user.id)
-        return
-
-    # REMOVE admin
-    if action == 'remove_admin':
-        try:
-            rem_id = int(m.text)
-            if remove_admin(rem_id):
-                bot.send_message(m.chat.id, f"Админ {rem_id} удалён")
+            if m.photo:
+                data['file_id'] = m.photo[-1].file_id
             else:
-                bot.send_message(m.chat.id, 'Нельзя удалить главного')
-        except:
-            bot.send_message(m.chat.id, 'Ошибка ID')
+                data['file_url'] = m.text
+            state['step'] = 2
+            bot.send_message(m.chat.id, 'Введите подпись или "нет"')
+            return
+        caption = None if m.text.lower() == 'нет' else m.text
+        cnt = 0
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM users")
+                users = cur.fetchall()
+        for (uid,) in users:
+            try:
+                if 'file_id' in data:
+                    msg = bot.send_photo(uid, data['file_id'], caption=caption)
+                else:
+                    msg = bot.send_photo(uid, data['file_url'], caption=caption)
+                broadcast_history.append((uid, msg.message_id))
+                cnt += 1
+            except:
+                pass
+        bot.send_message(m.chat.id, f"Фото разослано: {cnt}")
         admin_state.pop(m.from_user.id)
         return
 
-    # LOC broadcast
+    if action == 'video':
+        if step == 1:
+            if m.video:
+                data['file_id'] = m.video.file_id
+            else:
+                data['file_url'] = m.text
+            state['step'] = 2
+            bot.send_message(m.chat.id, 'Введите подпись или "нет"')
+            return
+        caption = None if m.text.lower() == 'нет' else m.text
+        cnt = 0
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM users")
+                users = cur.fetchall()
+        for (uid,) in users:
+            try:
+                if 'file_id' in data:
+                    msg = bot.send_video(uid, data['file_id'], caption=caption)
+                else:
+                    msg = bot.send_video(uid, data['file_url'], caption=caption)
+                broadcast_history.append((uid, msg.message_id))
+                cnt += 1
+            except:
+                pass
+        bot.send_message(m.chat.id, f"Видео разослано: {cnt}")
+        admin_state.pop(m.from_user.id)
+        return
+
+    if action == 'file':
+        if step == 1:
+            if m.document:
+                data['file_id'] = m.document.file_id
+            else:
+                data['file_url'] = m.text
+            state['step'] = 2
+            bot.send_message(m.chat.id, 'Введите подпись или "нет"')
+            return
+        caption = None if m.text.lower() == 'нет' else m.text
+        cnt = 0
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT user_id FROM users")
+                users = cur.fetchall()
+        for (uid,) in users:
+            try:
+                if 'file_id' in data:
+                    msg = bot.send_document(uid, data['file_id'], caption=caption)
+                else:
+                    msg = bot.send_document(uid, data['file_url'], caption=caption)
+                broadcast_history.append((uid, msg.message_id))
+                cnt += 1
+            except:
+                pass
+        bot.send_message(m.chat.id, f"Файл разослан: {cnt}")
+        admin_state.pop(m.from_user.id)
+        return
+
     if action == 'loc' and m.content_type == 'location':
         lat, lon = m.location.latitude, m.location.longitude
         cnt = 0
@@ -330,10 +378,10 @@ def admin_state_handler(m):
         admin_state.pop(m.from_user.id)
         return
 
-    # SETLOC
     if action == 'setloc':
         try:
             lat, lon, r = map(float, m.text.split())
+            global TARGET_LAT, TARGET_LON, RADIUS_METERS
             TARGET_LAT, TARGET_LON, RADIUS_METERS = lat, lon, r
             bot.send_message(m.chat.id, f"Новая локация: {lat}, {lon}, радиус {r}м")
         except:
@@ -341,97 +389,54 @@ def admin_state_handler(m):
         admin_state.pop(m.from_user.id)
         return
 
-    # PHOTO broadcast
-    if action == 'photo':
+    if action == 'clear':
         if step == 1:
-            if m.photo:
-                state['data']['file_id'] = m.photo[-1].file_id
-            else:
-                state['data']['file_url'] = m.text
-            state['step'] = 2
-            bot.send_message(m.chat.id, 'Введите подпись или "нет"')
-            return
-        caption = None if m.text.lower() == 'нет' else m.text
-        cnt = 0
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT user_id FROM users")
-                users = cur.fetchall()
-        for (uid,) in users:
             try:
-                if 'file_id' in state['data']:
-                    msg = bot.send_photo(uid, state['data']['file_id'], caption=caption)
-                else:
-                    msg = bot.send_photo(uid, state['data']['file_url'], caption=caption)
-                broadcast_history.append((uid, msg.message_id))
-                cnt += 1
+                n = int(m.text)
+                data['n'] = n
+                state['step'] = 2
+                bot.send_message(m.chat.id, 'Подтвердить удаление? да/нет')
+                return
             except:
-                pass
-        bot.send_message(m.chat.id, f"Фото разослано: {cnt}")
+                bot.send_message(m.chat.id, 'Укажи число')
+                return
+        if m.text.lower() == 'да':
+            cnt = 0
+            to_delete = broadcast_history[-data['n']:]
+            for uid, mid in to_delete:
+                try:
+                    bot.delete_message(uid, mid)
+                    cnt += 1
+                except:
+                    pass
+            bot.send_message(m.chat.id, f"Удалено: {cnt}")
+        else:
+            bot.send_message(m.chat.id, 'Удаление отменено')
         admin_state.pop(m.from_user.id)
         return
 
-    # VIDEO broadcast
-    if action == 'video':
-        if step == 1:
-            if m.video:
-                state['data']['file_id'] = m.video.file_id
-            else:
-                state['data']['file_url'] = m.text
-            state['step'] = 2
-            bot.send_message(m.chat.id, 'Введите подпись или "нет"')
-            return
-        caption = None if m.text.lower() == 'нет' else m.text
-        cnt = 0
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT user_id FROM users")
-                users = cur.fetchall()
-        for (uid,) in users:
-            try:
-                if 'file_id' in state['data']:
-                    msg = bot.send_video(uid, state['data']['file_id'], caption=caption)
-                else:
-                    msg = bot.send_video(uid, state['data']['file_url'], caption=caption)
-                broadcast_history.append((uid, msg.message_id))
-                cnt += 1
-            except:
-                pass
-        bot.send_message(m.chat.id, f"Видео разослано: {cnt}")
+    if action == 'assign':
+        try:
+            new_id = int(m.text)
+            add_admin(new_id)
+            bot.send_message(m.chat.id, f"Админ {new_id} добавлен")
+        except:
+            bot.send_message(m.chat.id, 'Ошибка ID')
         admin_state.pop(m.from_user.id)
         return
 
-    # FILE broadcast
-    if action == 'file':
-        if step == 1:
-            if m.document:
-                state['data']['file_id'] = m.document.file_id
+    if action == 'remove_admin':
+        try:
+            rem_id = int(m.text)
+            if remove_admin(rem_id):
+                bot.send_message(m.chat.id, f"Админ {rem_id} удалён")
             else:
-                state['data']['file_url'] = m.text
-            state['step'] = 2
-            bot.send_message(m.chat.id, 'Введите подпись или "нет"')
-            return
-        caption = None if m.text.lower() == 'нет' else m.text
-        cnt = 0
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT user_id FROM users")
-                users = cur.fetchall()
-        for (uid,) in users:
-            try:
-                if 'file_id' in state['data']:
-                    msg = bot.send_document(uid, state['data']['file_id'], caption=caption)
-                else:
-                    msg = bot.send_document(uid, state['data']['file_url'], caption=caption)
-                broadcast_history.append((uid, msg.message_id))
-                cnt += 1
-            except:
-                pass
-        bot.send_message(m.chat.id, f"Файл разослан: {cnt}")
+                bot.send_message(m.chat.id, 'Нельзя удалить главного')
+        except:
+            bot.send_message(m.chat.id, 'Ошибка ID')
         admin_state.pop(m.from_user.id)
         return
 
-# Init and start
 if __name__ == '__main__':
     init_db()
     logger.info('Bot started')
