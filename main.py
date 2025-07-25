@@ -24,8 +24,8 @@ db_config = {
 }
 
 # Geo settings
-TARGET_LAT = float(os.getenv("TARGET_LAT", "41.356015"))
-TARGET_LON = float(os.getenv("TARGET_LON", "69.314663"))
+TARGET_LAT = float(os.getenv("TARGET_LAT", "41.294740"))
+TARGET_LON = float(os.getenv("TARGET_LON", "69.276841"))
 RADIUS_METERS = float(os.getenv("RADIUS_METERS", "150"))
 
 # Setup logging
